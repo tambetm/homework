@@ -13,6 +13,7 @@ def create_model(observation_space, action_space, args):
         or isinstance(action_space, gym.spaces.Discrete)
 
     # TODO: Use given observation space, action space and command line parameters to create a model.
+    # NB! Use args.hidden_layers and args.hidden_nodes for the number of hidden layers and nodes.
     # NB! Depending if action space is Discerete or Box you need different outputs and loss function.
     #     For Discrete you need to output probabilities of actions and use cross-entropy loss.
     #     For Box you need to output means of Gaussians and use mean squared error loss.
@@ -56,6 +57,7 @@ def sample_trajectories(env, model, args):
             episode_actions.append(action)
             obs, reward, done, _ = env.step(action)
             episode_rewards.append(reward)
+
             steps += 1
             if args.render:
                 env.render()
@@ -70,16 +72,24 @@ def sample_trajectories(env, model, args):
     return observations, actions, rewards
 
 
-def compute_advantages(rewards, args):
-    # TODO: Compute advantages from given rewards.
+def compute_returns(rewards, args):
+    # TODO: Compute returns for each timestep.
     # NB! Use args.discount for discounting future rewards.
     # NB! Depending on args.reward_to_go calculate either total episode reward or future reward for each timestep.
+
+    # YOUR CODE HERE
+    raise NotImplementedError
+
+    return returns
+
+
+def compute_advantages(returns, args):
+    # TODO: Compute advantages as difference between returns and baseline.
     # NB! Depending on args.dont_normalize_advantages normalize advantages to 0 mean and 1 standard deviation.
 
     # YOUR CODE HERE
     raise NotImplementedError
 
-    assert len(advantages) == sum([len(rew) for rew in rewards])
     return advantages
 
 
@@ -95,7 +105,6 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', '-lr', type=float, default=5e-3)
     parser.add_argument('--reward_to_go', '-rtg', action='store_true')
     parser.add_argument('--dont_normalize_advantages', '-dna', action='store_true')
-    #parser.add_argument('--nn_baseline', '-bl', action='store_true')
     #parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--n_experiments', '-e', type=int, default=1)
     parser.add_argument('--hidden_layers', '-l', type=int, default=2)
@@ -134,8 +143,10 @@ if __name__ == '__main__':
         for i in range(args.n_iter):
             # sample trajectories
             observations, actions, rewards = sample_trajectories(env, model, args)
+            # compute returns
+            returns = compute_returns(rewards, args)
             # compute advantages
-            advantages = compute_advantages(rewards, args)
+            advantages = compute_advantages(returns, args)
             # flatten observations and actions
             observations = np.concatenate(observations)
             actions = np.concatenate(actions)
