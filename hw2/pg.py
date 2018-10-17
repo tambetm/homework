@@ -5,6 +5,9 @@ import json
 import time
 import gym
 import numpy as np
+from keras.layers import Input, Dense
+from keras.models import Model
+from keras.optimizers import Adam
 
 
 def create_model(observation_space, action_space, args):
@@ -12,27 +15,32 @@ def create_model(observation_space, action_space, args):
     assert isinstance(action_space, gym.spaces.Box) \
         or isinstance(action_space, gym.spaces.Discrete)
 
-    # TODO: Use given observation space, action space and command line parameters to create a model.
-    # NB! Use args.hidden_layers and args.hidden_nodes for the number of hidden layers and nodes.
-    # NB! Depending if action space is Discerete or Box you need different outputs and loss function.
-    #     For Discrete you need to output probabilities of actions and use cross-entropy loss.
-    #     For Box you need to output means of Gaussians and use mean squared error loss.
+    h = x = Input(shape=observation_space.shape)
+    for i in range(args.hidden_layers):
+        h = Dense(args.hidden_nodes, activation=args.activation_function)(h)
 
-    # YOUR CODE HERE
-    raise NotImplementedError
+    if isinstance(action_space, gym.spaces.Discrete):
+        y = Dense(action_space.n, activation='softmax')(h)
+        model = Model(x, y)
+        model.compile(optimizer=Adam(lr=args.learning_rate), loss='sparse_categorical_crossentropy')
+    else:
+        y = Dense(np.prod(action_space.shape))(h)
+        # TODO: learnable stddev?
+        model = Model(x, y)
+        model.compile(optimizer=Adam(lr=args.learning_rate), loss='mse')
 
+    model.summary()
     return model
 
 
 def train_model(model, observations, actions, advantages, args):
-    # flatten observations and actions
-    observations = np.concatenate(observations)
-    actions = np.concatenate(actions)
-
-    # TODO: Use given observations, actions and advantages to train the model.
-
-    # YOUR CODE HERE
-    raise NotImplementedError
+    # skip training if all advantages are 0s to prevent Keras bug?
+    if np.any(advantages):
+        # flatten observations and actions
+        observations = np.concatenate(observations)
+        actions = np.concatenate(actions)
+        # train the model using advantages as sample weights
+        model.train_on_batch(observations, actions, sample_weight=advantages)
 
 
 def sample_trajectories(env, model, args):
@@ -51,11 +59,13 @@ def sample_trajectories(env, model, args):
         done = False
         steps = 0
         while not done:
-            # TODO: Use your model to predict action for given observation.
-            # NB! You need to sample the action from probability distribution!
-
-            # YOUR CODE HERE
-            raise NotImplementedError
+            action = model.predict(obs[np.newaxis, :])
+            if isinstance(env.action_space, gym.spaces.Discrete):
+                action = np.random.choice(env.action_space.n, p=action[0])
+            else:
+                action = np.reshape(action[0], env.action_space.shape)
+                # TODO: implement learnable stddev
+                action = np.random.normal(action, scale=args.stddev)
 
             observations[-1].append(obs)
             actions[-1].append(action)
@@ -63,7 +73,7 @@ def sample_trajectories(env, model, args):
             rewards[-1].append(reward)
 
             steps += 1
-            if args.render:
+            if args.render and total_steps == 0:
                 env.render()
             if steps >= max_steps:
                 break
@@ -74,22 +84,52 @@ def sample_trajectories(env, model, args):
 
 
 def compute_returns(rewards, args):
-    # TODO: Compute returns for each timestep.
-    # NB! Use args.discount for discounting future rewards.
-    # NB! Depending on args.reward_to_go calculate either total episode reward or future reward for each timestep.
-
-    # YOUR CODE HERE
-    raise NotImplementedError
+    if args.reward_to_go:
+        returns = []
+        for eps_rew in rewards:
+            eps_ret = []
+            ret = 0
+            for rew in reversed(eps_rew):
+                ret = rew + args.discount * ret
+                eps_ret.insert(0, ret)
+            returns.append(eps_ret)
+    else:
+        returns = []
+        for eps_rew in rewards:
+            ret = 0
+            for rew in reversed(eps_rew):
+                ret = rew + args.discount * ret
+            eps_ret = [ret] * len(eps_rew)
+            returns.append(eps_ret)
 
     return returns
 
 
 def compute_advantages(returns, args):
-    # TODO: Compute advantages as difference between returns and baseline.
-    # NB! Depending on args.dont_normalize_advantages normalize advantages to 0 mean and 1 standard deviation.
+    if args.reward_to_go:
+        # calculate mean return per timestep
+        maxsteps = max([len(eps_ret) for eps_ret in returns])
+        retsums = np.zeros(maxsteps)
+        retcounts = np.zeros(maxsteps)
+        for eps_ret in returns:
+            retsums[:len(eps_ret)] += eps_ret
+            retcounts[:len(eps_ret)] += 1
+        baselines = retsums / retcounts
 
-    # YOUR CODE HERE
-    raise NotImplementedError
+        # calculate advantage per timestep
+        advantages = np.zeros(0)
+        for eps_ret in returns:
+            advantages = np.append(advantages, eps_ret - baselines[:len(eps_ret)])
+    else:
+        # calculate mean over episode total rewards
+        baseline = np.mean([ret[0] for ret in returns])
+        returns = np.concatenate(returns)
+        advantages = returns - baseline
+
+    if not args.dont_normalize_advantages:
+        advmean = np.mean(advantages)
+        advstd = np.std(advantages)
+        advantages = (advantages - advmean) / (advstd + np.finfo(float).eps)
 
     return advantages
 
@@ -106,10 +146,13 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', '-lr', type=float, default=5e-3)
     parser.add_argument('--reward_to_go', '-rtg', action='store_true')
     parser.add_argument('--dont_normalize_advantages', '-dna', action='store_true')
+    parser.add_argument('--stddev', type=float, default=0.1)
+    #parser.add_argument('--nn_baseline', '-bl', action='store_true')
     #parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--n_experiments', '-e', type=int, default=1)
     parser.add_argument('--hidden_layers', '-l', type=int, default=2)
     parser.add_argument('--hidden_nodes', '-s', type=int, default=64)
+    parser.add_argument('--activation_function', choices=['sigmoid', 'tanh', 'relu'], default='tanh')
     args = parser.parse_args()
 
     # create environment
@@ -166,6 +209,6 @@ if __name__ == '__main__':
                                sum(lengths), total_timesteps])
 
         csvfile.close()
-        # TODO: Optional - save the model for later testing.
+        model.save(os.path.join(logdir, 'model.hdf5'))
 
     print("Done")
