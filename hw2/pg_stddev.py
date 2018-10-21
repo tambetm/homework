@@ -7,7 +7,7 @@ import gym
 import numpy as np
 from keras.layers import Input, Dense, Activation, Lambda
 from keras.models import Model
-from keras.optimizers import Adam
+from keras.optimizers import RMSprop
 from keras.losses import sparse_categorical_crossentropy
 from keras.initializers import Constant
 from keras.engine.topology import Layer
@@ -22,12 +22,12 @@ class SampleGaussian(Layer):
 
     def build(self, input_shape):
         # Create a trainable weight variable for this layer.
-        logstd = self.add_weight(name='logstd',
-                                 shape=(1,) + input_shape[1:],
-                                 initializer=Constant(np.log(self.initial_std)),
-                                 trainable=True)
+        self.logstd = self.add_weight(name='logstd',
+                                      shape=(1,) + input_shape[1:],
+                                      initializer=Constant(np.log(self.initial_std)),
+                                      trainable=True)
         # make sure the stddev is positive
-        self.std = K.exp(logstd)
+        self.std = K.exp(self.logstd)
         super(SampleGaussian, self).build(input_shape)
 
     def call(self, x):
@@ -53,7 +53,7 @@ def create_model(observation_space, action_space, args):
         # model outputs sampled action
         model = Model(x, a)
         # loss is between true values and probabilities
-        model.compile(optimizer=Adam(lr=args.learning_rate), loss=lambda y_true, y_pred: sparse_categorical_crossentropy(y_true, p))
+        model.compile(optimizer=RMSprop(lr=args.learning_rate), loss=lambda y_true, y_pred: sparse_categorical_crossentropy(y_true, p))
     else:
         # number of actions
         n = np.prod(action_space.shape)
@@ -62,11 +62,13 @@ def create_model(observation_space, action_space, args):
         # sample action from Gaussian
         gaussian = SampleGaussian(initial_std=args.stddev)
         a = gaussian(mu)
+        global std
+        std = gaussian.std
         # model outputs sampled action
         model = Model(x, a)
-        # log loss of Gaussian probability
-        model.compile(optimizer=Adam(lr=args.learning_rate, clipnorm=1.),
-                      loss=lambda y_true, y_pred: 0.5 * K.log(2 * np.pi * gaussian.std**2) + 0.5 * (y_true - mu)**2 / gaussian.std**2)
+        # negative log likelihood of Gaussian
+        model.compile(optimizer=RMSprop(lr=args.learning_rate, clipnorm=1.),
+                      loss=lambda y_true, y_pred: 0.5 * np.log(2 * np.pi) + gaussian.logstd + 0.5 * ((y_true - mu) / gaussian.std)**2)
 
     model.summary()
     return model
@@ -183,7 +185,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', '-lr', type=float, default=5e-3)
     parser.add_argument('--reward_to_go', '-rtg', action='store_true')
     parser.add_argument('--dont_normalize_advantages', '-dna', action='store_true')
-    parser.add_argument('--stddev', type=float, default=1.)
+    parser.add_argument('--stddev', type=float, default=0.1)
     #parser.add_argument('--nn_baseline', '-bl', action='store_true')
     #parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--n_experiments', '-e', type=int, default=1)
@@ -235,10 +237,12 @@ if __name__ == '__main__':
             returns = [sum(eps_rew) for eps_rew in rewards]
             lengths = [len(eps_rew) for eps_rew in rewards]
             total_timesteps += sum(lengths)
+            with K.get_session().as_default():
+                stddev = std.eval()
             print("Iteration %d:" % (i + 1),
                   "reward mean %f±%f" % (np.mean(returns), np.std(returns)),
                   "episode length %f±%f" % (np.mean(lengths), np.std(lengths)),
-                  "total timesteps", total_timesteps)
+                  "total timesteps", total_timesteps, "stddev:", stddev)
             csvwriter.writerow([time.time() - start, i,
                                np.mean(returns), np.std(returns),
                                np.max(returns), np.min(returns),

@@ -7,7 +7,7 @@ import gym
 import numpy as np
 from keras.layers import Input, Dense, Activation, Lambda
 from keras.models import Model
-from keras.optimizers import Adam
+from keras.optimizers import RMSprop
 from keras.losses import sparse_categorical_crossentropy
 from keras.initializers import Constant
 import keras.backend as K
@@ -33,20 +33,21 @@ def create_model(observation_space, action_space, args):
         # model outputs sampled action
         model = Model(x, a)
         # loss is between true values and probabilities
-        model.compile(optimizer=Adam(lr=args.learning_rate), loss=lambda y_true, y_pred: sparse_categorical_crossentropy(y_true, p))
+        model.compile(optimizer=RMSprop(lr=args.learning_rate), loss=lambda y_true, y_pred: sparse_categorical_crossentropy(y_true, p))
     else:
         # number of actions
         n = np.prod(action_space.shape)
         # produce means and stddevs for Gaussian
         mu = Dense(n)(h)
-        std = Dense(n, activation=K.exp, bias_initializer=Constant(np.log(args.stddev)))(h)
+        logstd = Dense(n, bias_initializer=Constant(np.log(args.stddev)))(h)
+        std = Activation(K.exp)(logstd)
         # sample action from Gaussian
         a = Lambda(lambda x: mu + std * K.random_normal(K.shape(mu)))([mu, std])
         # model outputs sampled action
         model = Model(x, a)
-        # log loss of Gaussian probability
-        model.compile(optimizer=Adam(lr=args.learning_rate, clipnorm=1.),
-                      loss=lambda y_true, y_pred: 0.5 * K.log(2 * np.pi * std**2) + 0.5 * (y_true - mu)**2 / std**2)
+        # negative log likelihood of Gaussian
+        model.compile(optimizer=RMSprop(lr=args.learning_rate, clipnorm=1.),
+                      loss=lambda y_true, y_pred: 0.5 * np.log(2 * np.pi) + logstd + 0.5 * ((y_true - mu) / std)**2)
 
     model.summary()
     return model
@@ -83,9 +84,6 @@ def sample_trajectories(env, model, args):
                 action = action[0, 0]
             else:
                 action = np.reshape(action[0], env.action_space.shape)
-
-                if args.env_name == 'LunarLanderCountinuous-v2':
-                    action = np.clip(action, -1, 1)
 
             observations[-1].append(obs)
             actions[-1].append(action)
@@ -166,7 +164,7 @@ if __name__ == '__main__':
     parser.add_argument('--learning_rate', '-lr', type=float, default=5e-3)
     parser.add_argument('--reward_to_go', '-rtg', action='store_true')
     parser.add_argument('--dont_normalize_advantages', '-dna', action='store_true')
-    parser.add_argument('--stddev', type=float, default=1.)
+    parser.add_argument('--stddev', type=float, default=0.1)
     #parser.add_argument('--nn_baseline', '-bl', action='store_true')
     #parser.add_argument('--seed', type=int, default=1)
     parser.add_argument('--n_experiments', '-e', type=int, default=1)

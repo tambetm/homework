@@ -5,9 +5,12 @@ import json
 import time
 import gym
 import numpy as np
-from keras.layers import Input, Dense
+from keras.layers import Input, Dense, Activation, Lambda
 from keras.models import Model
 from keras.optimizers import RMSprop
+from keras.losses import sparse_categorical_crossentropy, mse
+import keras.backend as K
+import tensorflow as tf
 
 
 def create_model(observation_space, action_space, args):
@@ -20,14 +23,28 @@ def create_model(observation_space, action_space, args):
         h = Dense(args.hidden_nodes, activation=args.activation_function)(h)
 
     if isinstance(action_space, gym.spaces.Discrete):
-        y = Dense(action_space.n, activation='softmax')(h)
-        model = Model(x, y)
-        model.compile(optimizer=RMSprop(lr=args.learning_rate), loss='sparse_categorical_crossentropy')
+        # produce logits for all actions
+        h = Dense(action_space.n)(h)
+        # sample action from logits
+        a = Lambda(lambda x: tf.multinomial(x, num_samples=1))(h)
+        # turn logits into probabilities
+        p = Activation('softmax')(h)
+        # model outputs sampled action
+        model = Model(x, a)
+        # loss is between true values and probabilities
+        model.compile(optimizer=RMSprop(lr=args.learning_rate), loss=lambda y_true, y_pred: sparse_categorical_crossentropy(y_true, p))
     else:
-        y = Dense(np.prod(action_space.shape))(h)
-        # TODO: learnable stddev?
-        model = Model(x, y)
-        model.compile(optimizer=RMSprop(lr=args.learning_rate, clipnorm=1.), loss='mse')
+        # number of actions
+        n = np.prod(action_space.shape)
+        # produce means and stddevs for Gaussian
+        mu = Dense(n)(h)
+        std = args.stddev
+        # sample action from Gaussian
+        a = Lambda(lambda mu: mu + std * K.random_normal(K.shape(mu)))(mu)
+        # model outputs sampled action
+        model = Model(x, a)
+        # log loss of Gaussian probability
+        model.compile(optimizer=RMSprop(lr=args.learning_rate, clipnorm=1.), loss=lambda y_true, y_pred: mse(y_true, mu))
 
     model.summary()
     return model
@@ -61,11 +78,9 @@ def sample_trajectories(env, model, args):
         while not done:
             action = model.predict(obs[np.newaxis, :])
             if isinstance(env.action_space, gym.spaces.Discrete):
-                action = np.random.choice(env.action_space.n, p=action[0])
+                action = action[0, 0]
             else:
                 action = np.reshape(action[0], env.action_space.shape)
-                # TODO: implement learnable stddev
-                action = np.random.normal(action, scale=args.stddev)
 
             observations[-1].append(obs)
             actions[-1].append(action)
