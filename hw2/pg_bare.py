@@ -25,10 +25,6 @@ def create_model(observation_space, action_space, args):
 
 
 def train_model(model, observations, actions, advantages, args):
-    # flatten observations and actions
-    observations = np.concatenate(observations)
-    actions = np.concatenate(actions)
-
     # TODO: Use given observations, actions and advantages to train the model.
 
     # YOUR CODE HERE
@@ -148,6 +144,9 @@ if __name__ == '__main__':
             returns = compute_returns(rewards, args)
             # compute advantages
             advantages = compute_advantages(returns, args)
+            # flatten observations and actions
+            observations = np.concatenate(observations)
+            actions = np.concatenate(actions)
             # train model
             train_model(model, observations, actions, advantages, args)
 
