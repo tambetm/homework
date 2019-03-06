@@ -55,6 +55,7 @@ def plot_data(data, value="AverageReturn"):
     sns.set(style="darkgrid", font_scale=1.5)
     sns.tsplot(data=data, time="Iteration", value=value, unit="Unit", condition="Condition")
     plt.legend(loc='best').draggable()
+    plt.tight_layout()
     plt.show()
 
 
@@ -63,6 +64,7 @@ def get_datasets(fpath, condition=None):
     datasets = []
     for root, dir, files in os.walk(fpath):
         if 'log.txt' in files:
+        #if 'log.txt' in files and 'model.hdf5' in files:
             param_path = open(os.path.join(root,'params.json'))
             params = json.load(param_path)
             exp_name = params['exp_name']
