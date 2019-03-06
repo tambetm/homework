@@ -103,24 +103,44 @@ class SAC:
         )
 
     def _policy_loss_for(self, policy, q_function, q_function2, value_function):
+        a, logp = policy(self._observations_ph)
+        q = q_function((self._observations_ph, a))
+        if q_function2 is not None:
+            q2 = q_function2((self._observations_ph, a))
+            q = tf.minimum(q, q2)
+
         if not self._reparameterize:
             ### Problem 1.3.A
             ### YOUR CODE HERE
-            raise NotImplementedError
+            # TODO: try 0
+            b = value_function(self._observations_ph)
+            loss = tf.reduce_mean(logp * tf.stop_gradient(self._alpha * logp - q + b))
+            return loss
         else:
             ### Problem 1.3.B
             ### YOUR CODE HERE
-            raise NotImplementedError
+            loss = tf.reduce_mean(self._alpha * logp - q)
+            return loss
 
     def _value_function_loss_for(self, policy, q_function, q_function2, value_function):
         ### Problem 1.2.A
         ### YOUR CODE HERE
-        raise NotImplementedError
+        a, logp = policy(self._observations_ph)
+        v = value_function(self._observations_ph)
+        q = q_function((self._observations_ph, a))
+        if q_function2 is not None:
+            q2 = q_function2((self._observations_ph, a))
+            q = tf.minimum(q, q2)
+        loss = tf.reduce_mean((v - (q - self._alpha * logp))**2)
+        return loss
 
     def _q_function_loss_for(self, q_function, target_value_function):
         ### Problem 1.1.A
         ### YOUR CODE HERE
-        raise NotImplementedError
+        q = q_function((self._observations_ph, self._actions_ph))
+        v = target_value_function(self._next_observations_ph)
+        loss = tf.reduce_mean((q - (self._rewards_ph + (1 - self._terminals_ph) * self._discount * v))**2)
+        return loss
 
     def _create_target_update(self, source, target):
         """Create tensorflow operations for updating target value function."""
